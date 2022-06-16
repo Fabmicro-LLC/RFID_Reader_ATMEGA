@@ -1,5 +1,5 @@
-#include "mfrc522.h"
 #include "main.h"
+#include "mfrc522.h"
 
 //#define	MRFC522_DEBUG	1
 
@@ -8,6 +8,21 @@
 #else
 	#define	debug(...) {}
 #endif
+
+
+/* Known keys, see: https://code.google.com/p/mfcuk/wiki/MifareClassicDefaultKeys */
+MIFARE_Key mfrc522_knownKeys[] =  {
+    {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, // FF FF FF FF FF FF = factory default
+    {0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5}, // A0 A1 A2 A3 A4 A5
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  // 00 00 00 00 00 00
+    {0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5}, // B0 B1 B2 B3 B4 B5
+    {0x4d, 0x3a, 0x99, 0xc3, 0x51, 0xdd}, // 4D 3A 99 C3 51 DD
+    {0x1a, 0x98, 0x2c, 0x7e, 0x45, 0x9a}, // 1A 98 2C 7E 45 9A
+    {0xd3, 0xf7, 0xd3, 0xf7, 0xd3, 0xf7}, // D3 F7 D3 F7 D3 F7
+    {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}, // AA BB CC DD EE FF
+};
+
+int MF_NR_KNOWN_KEYS = sizeof(mfrc522_knownKeys) / sizeof(*mfrc522_knownKeys);
 
 int mfrc522_PICC_GetType(uint8_t sak /* The SAK byte returned from PICC_Select(). */
 ) {
@@ -173,7 +188,7 @@ int mfrc522_Init(void)
 }
 
 
-int8_t mfrc522_CalculateCRC(uint8_t *data, /* In: Pointer to the data to transfer to the FIFO for CRC calculation. */
+int8_t mfrc522_PCD_CalculateCRC(uint8_t *data, /* In: Pointer to the data to transfer to the FIFO for CRC calculation. */
 			    uint8_t size, /* In: The number of bytes to transfer. */
 			    uint8_t *result /* Out: Pointer to result buffer. Result is written to result[0..1], low byte first. */
 ) {
@@ -202,7 +217,7 @@ int8_t mfrc522_CalculateCRC(uint8_t *data, /* In: Pointer to the data to transfe
 	return -12; // Timeout
 }
 
-int mfrc522_CommunicateWithPICC(uint8_t cmd, /* command to execute */
+int mfrc522_PCD_CommunicateWithPICC(uint8_t cmd, /* command to execute */
 				   uint8_t waitIRq, /* The bits in the ComIrqReg register that signals successful completion */
 				   uint8_t *sendData, /* Pointer to the data to transfer to the FIFO. */
 				   uint8_t sendLen, /* Number of bytes to transfer to the FIFO. */
@@ -332,7 +347,7 @@ int mfrc522_CommunicateWithPICC(uint8_t cmd, /* command to execute */
 
 		/* Verify CRC_A - do our own calculation and store the control in controlBuffer. */
 		uint8_t controlBuffer[2];
-		if(mfrc522_CalculateCRC(&backData[0], *backLen - 2, &controlBuffer[0]))
+		if(mfrc522_PCD_CalculateCRC(&backData[0], *backLen - 2, &controlBuffer[0]))
 			return -14; // CRC calc error;
 
 		if ((backData[*backLen - 2] != controlBuffer[0]) || (backData[*backLen - 1] != controlBuffer[1]))
@@ -357,7 +372,7 @@ int mfrc522_PICC_REQA_or_WUPA(uint8_t cmd, uint8_t *backBuffer, uint8_t *backSiz
 
 	mfrc522_write(REG_COLLISION, mfrc522_read(REG_COLLISION) & 0x80); /* clear collision bits */
 
-	error = mfrc522_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
+	error = mfrc522_PCD_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
 				sendBuffer, 1, backBuffer, backSize, &validBits, 0 /* rxAlign */, 0 /* checkCRC */);
 	if (error) {
 		debug("MFRC522: PICC error %d\r\n", error);
@@ -504,7 +519,7 @@ int mfrc522_PICC_Select(Uid *uid, /* Pointer to Uid struct. Normally output, but
 				buffer[6] = buffer[2] ^ buffer[3] ^ buffer[4] ^ buffer[5];
 
 				/* Calculate CRC_A */
-				result = mfrc522_CalculateCRC(buffer, 7, &buffer[7]);
+				result = mfrc522_PCD_CalculateCRC(buffer, 7, &buffer[7]);
 				if (result < 0)
 					return result;
 
@@ -536,7 +551,7 @@ int mfrc522_PICC_Select(Uid *uid, /* Pointer to Uid struct. Normally output, but
 			
 			/* Transmit buffer and receive response. */
 
-			result = mfrc522_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
+			result = mfrc522_PCD_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
 				buffer, bufferUsed, responseBuffer, &responseLength, &txLastBits, rxAlign, 0 /* checkCRC */);
 
 			if (result == -11) { /* More than one PICC in the field => collision. */
@@ -589,7 +604,7 @@ int mfrc522_PICC_Select(Uid *uid, /* Pointer to Uid struct. Normally output, but
 		/* Verify CRC_A - do our own calculation and store the control in buffer[2..3] 
 			- those bytes are not needed anymore. */
 
-		result = mfrc522_CalculateCRC(responseBuffer, 1, &buffer[2]);
+		result = mfrc522_PCD_CalculateCRC(responseBuffer, 1, &buffer[2]);
 		if (result != 0)
 			return result;
 
@@ -620,7 +635,7 @@ int mfrc522_PICC_HaltA(void)
 	buffer[1] = 0;
 
 	/* Calculate CRC_A */
-	result = mfrc522_CalculateCRC(buffer, 2, &buffer[2]);
+	result = mfrc522_PCD_CalculateCRC(buffer, 2, &buffer[2]);
 	if (result != 0) 
 		return result;
 	
@@ -631,7 +646,7 @@ int mfrc522_PICC_HaltA(void)
 	    HLTA command, this response shall be interpreted as 'not acknowledge'.
 	    We interpret that this way: Only STATUS_TIMEOUT is a success.
 	*/
-	result = mfrc522_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
+	result = mfrc522_PCD_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30 /*waitIRq = RxIRq | IdleIRq */, 
 				buffer, sizeof(buffer), NULL, NULL, NULL, 0 /* rxAlign */, 0 /* checkCRC */);
 	if (result == -4) // STATUS_TIMEOUT
 		return 0;
@@ -641,4 +656,92 @@ int mfrc522_PICC_HaltA(void)
 
 	return result;
 } 
+
+void mfrc522_PCD_StopCrypto1(void)
+{
+	/* Status2Reg[7..0] bits are: TempSensClear I2CForceHS reserved reserved MFCrypto1On ModemState[2:0] */
+	/* Clear MFCrypto1On bit */
+	mfrc522_write(REG_STATUS2, mfrc522_read(REG_STATUS2) & ~0x08);
+}
+
+/**
+ * Executes the MFRC522 MFAuthent command.
+ * This command manages MIFARE authentication to enable a secure communication to any MIFARE Mini, MIFARE 1K and MIFARE 4K card.
+ * The authentication is described in the MFRC522 datasheet section 10.3.1.9 and http://www.nxp.com/documents/data_sheet/MF1S503x.pdf section 10.1.
+ * For use with MIFARE Classic PICCs.
+ * The PICC must be selected - ie in state ACTIVE(*) - before calling this function.
+ * Remember to call PCD_StopCrypto1() after communicating with the authenticated PICC - otherwise no new communications can start.
+ * 
+ * All keys are set to FFFFFFFFFFFFh at chip delivery.
+ * 
+ * @return STATUS_OK on success, STATUS_??? otherwise. Probably STATUS_TIMEOUT if you supply the wrong key.
+ */
+int mfrc522_PCD_Authenticate(uint8_t command, /* PICC_CMD_MF_AUTH_KEY_A or PICC_CMD_MF_AUTH_KEY_B */
+			uint8_t blockAddr, /* The block number. See numbering in the comments in the .h file. */
+			MIFARE_Key *key, /* Pointer to the Crypto1 key to use (6 bytes) */
+			Uid *uid /* Pointer to Uid struct. The first 4 bytes of the UID is used. */
+) {
+	uint8_t waitIRq = 0x10;		/* IdleIRq */
+	
+	/* Build command buffer */
+	uint8_t sendData[12] = { 0 };
+	sendData[0] = command;
+	sendData[1] = blockAddr;
+	for (int i = 0; i < MF_KEY_SIZE; i++) /* 6 key bytes */
+		sendData[2+i] = key->keyByte[i];
+
+	/*
+	    Use the last uid bytes as specified in http://cache.nxp.com/documents/application_note/AN10927.pdf
+	    section 3.2.5 "MIFARE Classic Authentication".
+	    The only missed case is the MF1Sxxxx shortcut activation,
+	    but it requires cascade tag (CT) byte, that is not part of uid.
+	*/
+	for (int i = 0; i < 4; i++) /* The last 4 bytes of the UID */
+		sendData[8+i] = uid->uidByte[i+uid->size-4];
+	
+	/* Start the authentication. */
+	return mfrc522_PCD_CommunicateWithPICC(CMD_MF_AUTH, waitIRq, sendData, sizeof(sendData),
+				NULL, NULL, NULL, 0 /* rxAlign */, 0 /* checkCRC */);
+}
+
+/**
+ * Reads 16 bytes (+ 2 bytes CRC_A) from the active PICC.
+ * 
+ * For MIFARE Classic the sector containing the block must be authenticated before calling this function.
+ * 
+ * For MIFARE Ultralight only addresses 00h to 0Fh are decoded.
+ * The MF0ICU1 returns a NAK for higher addresses.
+ * The MF0ICU1 responds to the READ command by sending 16 bytes starting from the page address defined by the command argument.
+ * For example; if blockAddr is 03h then pages 03h, 04h, 05h, 06h are returned.
+ * A roll-back is implemented: If blockAddr is 0Eh, then the contents of pages 0Eh, 0Fh, 00h and 01h are returned.
+ * 
+ * The buffer must be at least 18 bytes because a CRC_A is also returned.
+ * Checks the CRC_A before returning STATUS_OK.
+ * 
+ * @return STATUS_OK on success, STATUS_??? otherwise.
+ */
+int mfrc522_MIFARE_Read(uint8_t blockAddr, /* MIFARE Classic: The block (0-0xff) number.
+					      MIFARE Ultralight: The first page to return data from. */
+			uint8_t *buffer, /* Buffer to store the data to */
+			uint8_t *bufferSize /* Buffer size, at least 18 bytes. Also number of bytes returned if STATUS_OK. */
+) {
+	int result;
+	
+	/* Sanity check */
+	if (buffer == NULL || *bufferSize < 18)
+		return -51;
+	
+	/* Build command buffer */
+	buffer[0] = PICC_CMD_MF_READ;
+	buffer[1] = blockAddr;
+
+	/* Calculate CRC_A */
+	result = mfrc522_PCD_CalculateCRC(buffer, 2, &buffer[2]);
+	if (result != 0)
+		return result;
+	
+	/* Transmit the buffer and receive the response, validate CRC_A. */
+	return mfrc522_PCD_CommunicateWithPICC(CMD_TRANSCEIVE, 0x30, buffer, 4,
+				buffer, bufferSize, NULL, 0 /* rxAlign */, 1 /* checkCRC */);
+}
 

@@ -50,6 +50,31 @@ void delay_ms(int ms)
 	}
 }
 
+inline char nibble_to_char(uint8_t nibble)
+{
+	nibble &= 0x0f;
+
+	if(nibble < 10)
+		return nibble + '0';
+	else
+		return nibble + 'A' - 10;
+}
+
+char *bin_to_str(uint8_t* data, int size)
+{
+	static char str[128];
+	char *p = str;
+
+	for(int i = 0; i < size; i++) {
+		*p++ = nibble_to_char(data[i] >> 4);
+		*p++ = nibble_to_char(data[i]);
+		*p++ = ':';
+	}
+	*p = 0x0;
+
+	return str;
+}
+
 uint16_t crc16(uint8_t *buf, uint16_t len)
 {
   uint16_t crc = 0xFFFF;
@@ -259,7 +284,7 @@ void main(void)
 			/* Scan RF for PICC devices */
 			rc = mfrc522_PICC_IsNewCardPresent();
 
-			if(rc == 0) {
+			if(rc == 0) { /* Card present */
 				Uid uid;
 				memset(&uid, 0, sizeof(uid));
 				rc = mfrc522_PICC_Select(&uid, 0 /* validBits, if set to 0 no uid supplied */);
@@ -267,18 +292,108 @@ void main(void)
 				uint8_t type = mfrc522_PICC_GetType(uid.sak);
 				const char *type_name = mfrc522_PICC_GetTypeName(type);
 
-				if(rc == 0) {
-
-					rc = mfrc522_PICC_HaltA();
+				if(rc == 0) { /* Card selected OK */
 
 					printf("MFRC522_INFO: Card %02X%02X%02X%02X type %d present: %s\r\n", 
 						uid.uidByte[0],uid.uidByte[1],uid.uidByte[2],uid.uidByte[3],
 						type, type_name);
-					printf("MFRC522_DEBUG: HaltA rc: %d, uid.size: %d\r\n", rc, uid.size);
+
+					int result = 0;
+					int key;
+					uint8_t buffer[18];
+					uint8_t block = 0;
+
+					for(key = 0; key < MF_NR_KNOWN_KEYS && !result; key++) {
+
+						__asm__ __volatile__ ("wdr"); // reset WatchDog Timer
+
+						rc = mfrc522_PCD_Authenticate(PICC_CMD_MF_AUTH_KEY_A, block, 
+							&mfrc522_knownKeys[key], &uid);
+
+						if(rc == 0) { /* KEY_A auth OK */ 
+							result = 1;
+							printf("MFCR522_DEBUG: KEY_A Auth OK, key[%d]: %s\r\n", key, bin_to_str(mfrc522_knownKeys[key].keyByte, MF_KEY_SIZE));
+							break;
+						} 
+
+						printf("MFCR522_DEBUG: KEY_A Auth failed, key[%d]: %s, rc: %d\r\n", key, bin_to_str(mfrc522_knownKeys[key].keyByte, MF_KEY_SIZE), rc);
+
+						/* Halt and select again after KEY_A failed as auth fail de-selcets the card */
+
+						//mfrc522_PICC_HaltA();
+						rc = mfrc522_PICC_IsNewCardPresent();
+
+						rc = mfrc522_PICC_Select(&uid, uid.size * 8); 
+						if (rc != 0) {
+							printf("MFCR522_DEBUG: Select again failed after KEY_A\r\n");
+							break;
+						}
+
+						rc = mfrc522_PCD_Authenticate(PICC_CMD_MF_AUTH_KEY_B, block, 
+							&mfrc522_knownKeys[key], &uid);
+
+						if(rc == 0) { /* KEY_B auth OK */
+							result = 1;
+							printf("MFCR522_DEBUG: KEY_B Auth OK, key[%d]: %s\r\n", key, bin_to_str(mfrc522_knownKeys[key].keyByte, MF_KEY_SIZE));
+							break;
+						}
+
+						printf("MFCR522_DEBUG: KEY_B Auth failed, key[%d]: %s, rc: %d\r\n", key, bin_to_str(mfrc522_knownKeys[key].keyByte, MF_KEY_SIZE), rc);
+
+						/* Halt and select again after KEY_A failed as auth fail de-selcets the card */
+
+						//mfrc522_PICC_HaltA();
+						rc = mfrc522_PICC_IsNewCardPresent();
+
+						rc = mfrc522_PICC_Select(&uid, uid.size * 8);
+						if (rc != 0) {
+							printf("MFCR522_DEBUG: Select again failed after KEY_B\r\n");
+							break;
+						}
+					}
+
+					if(!result) {
+						printf("MFRC522_DEBUG: Authentication failed\r\n");
+						goto mfrc_card_end;
+					}
+
+					__asm__ __volatile__ ("wdr"); // reset WatchDog Timer
+
+					printf("MFRC522_INFO: Authenticated card: %02X%02X%02X%02X, key[%d]: %s\r\n",
+						uid.uidByte[0],uid.uidByte[1],uid.uidByte[2],uid.uidByte[3],
+						key,
+						bin_to_str(mfrc522_knownKeys[key].keyByte, MF_KEY_SIZE)
+					);
+
+					/* Read four blocks starting with %block% */
+
+					for(int i = 0; i < 4; i++) {
+						/* Read one block */
+						uint8_t byteCount = sizeof(buffer);
+						rc = mfrc522_MIFARE_Read(block + i, buffer, &byteCount);
+
+						if(rc == 0) { /* Block read OK */
+							printf("MFRC522_INFO: Read card: %02X%02X%02X%02X, block[%d]: %s\r\n",
+								uid.uidByte[0],uid.uidByte[1],uid.uidByte[2],uid.uidByte[3],
+								block + i, bin_to_str(buffer, 16)
+							);
+							
+						} else {
+							printf("MFRC522_DEBUG: Block %d read failed, rc: %d\r\n", block + i, rc);
+							goto mfrc_card_end;
+						}
+					}
+
+					mfrc_card_end:
+					mfrc522_PICC_HaltA();
+					mfrc522_PCD_StopCrypto1();
+					;
 				} else {
 					printf("MFRC522_INFO: Error %d reading card type %d: %s\r\n", 
 						rc, type, type_name);
 				}
+
+				timer_counter2 = 0; /* Card business takes too much time */ 
 			} else { 
 				//printf("MFRC522_INFO: No card present, rc: %d\r\n", rc);
 			}
@@ -322,18 +437,15 @@ ISR(TIMER1_COMPA_vect) {
 	sei();
 }
 
+volatile uint8_t junk;
 
 ISR(USART0_RX_vect) {
 	
 	// Debug port input
 
-printf("XXX\r\n");
-	/* Do nothing
-	char a;
 	cli();
-	/usart0_getchar(&a); // just skip input data on RX0
+	usart0_getchar((uint8_t*)&junk); // just skip input data on RX0
 	sei();
-	*/
 }
 
 
@@ -341,11 +453,6 @@ ISR(USART1_RX_vect) {
 	
 	// MFRC522 port input
 
-	/* Do nothing
-	cli();
-	// ...	
-	sei();
-
-	*/
+	// Do nothing
 }
 

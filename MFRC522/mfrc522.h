@@ -86,6 +86,9 @@
 // The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
 #define PICC_CMD_UL_WRITE	0xA2 // Writes one 4 byte page to the PICC.
 
+#define	MF_KEY_SIZE		6	/* A Mifare Crypto1 key is 6 bytes */
+#define	MF_ACK			0x0a	/* The MIFARE Classic uses a 4 bit ACK/NAK. Any other value than 0xA is NAK. */
+
 /*
 	PICC types we can detect. Remember to update mfrc_GetTypeName() if you add more.
 */
@@ -109,6 +112,12 @@ typedef struct {
         uint8_t sak;            /* The SAK (Select acknowledge) byte returned from the PICC after successful selection. */
 } Uid;
 
+typedef struct {
+	uint8_t keyByte[MF_KEY_SIZE];
+} MIFARE_Key;
+
+extern MIFARE_Key mfrc522_knownKeys[];
+extern int MF_NR_KNOWN_KEYS;
 
 int mfrc522_read(uint8_t reg);
 int mfrc522_read_array(uint8_t reg, uint8_t *values, uint8_t size, uint8_t rxAlign);
@@ -116,11 +125,11 @@ int mfrc522_write(uint8_t reg, uint8_t val);
 int mfrc522_write_array(uint8_t reg, uint8_t *data, uint8_t size);
 int mfrc522_Init(void);
 int mfrc522_PICC_IsNewCardPresent(void);
-int8_t mfrc522_CalculateCRC(uint8_t *data, /* In: Pointer to the data to transfer to the FIFO for CRC calculation. */
+int8_t mfrc522_PCD_CalculateCRC(uint8_t *data, /* In: Pointer to the data to transfer to the FIFO for CRC calculation. */
                             uint8_t size, /* In: The number of bytes to transfer. */
                             uint8_t *result /* Out: Pointer to result buffer. Result is written to result[0..1], low byte first. */
 );
-int mfrc522_CommunicateWithPICC(uint8_t cmd, /* command to execute */
+int mfrc522_PCD_CommunicateWithPICC(uint8_t cmd, /* command to execute */
                                    uint8_t waitIRq, /* The bits in the ComIrqReg register that signals successful completion */
                                    uint8_t *sendData, /* Pointer to the data to transfer to the FIFO. */
                                    uint8_t sendLen, /* Number of bytes to transfer to the FIFO. */
@@ -138,6 +147,18 @@ int mfrc522_PICC_REQA_or_WUPA(uint8_t cmd, uint8_t *backBuffer, uint8_t *backSiz
 int mfrc522_PICC_GetType(uint8_t sak /* The SAK byte returned from PICC_Select(). */);
 const char *mfrc522_PICC_GetTypeName(uint8_t piccType /* One of the PICC_TYPE enums. */);
 int mfrc522_PICC_HaltA(void);
+void mfrc522_PCD_StopCrypto1(void);
+int mfrc522_PCD_Authenticate(uint8_t command, /* PICC_CMD_MF_AUTH_KEY_A or PICC_CMD_MF_AUTH_KEY_B */
+                        uint8_t blockAddr, /* The block number. See numbering in the comments in the .h file. */
+                        MIFARE_Key *key, /* Pointer to the Crypteo1 key to use (6 bytes) */
+                        Uid *uid /* Pointer to Uid struct. The first 4 bytes of the UID is used. */
+);
+int mfrc522_MIFARE_Read(uint8_t blockAddr, /* MIFARE Classic: The block (0-0xff) number.
+                                              MIFARE Ultralight: The first page to return data from. */
+                        uint8_t *buffer, /* Buffer to store the data to */
+                        uint8_t *bufferSize /* Buffer size, at least 18 bytes. Also number of bytes returned if STATUS_OK. */
+);
+
 
 
 #endif // __MFCR5222_H__
